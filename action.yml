@@ -1,0 +1,68 @@
+name: SheetSentry
+description: Check .xlsx files for breakage that stops imports and corrupts calculations
+author: SheetSentry
+
+branding:
+  icon: grid
+  color: blue
+
+inputs:
+  files:
+    description: Which files to check (glob)
+    required: false
+    default: "**/*.xlsx"
+  fail-on:
+    description: Severity that fails the step - error, warning, info or never
+    required: false
+    default: error
+  format:
+    description: Output format - text, json or sarif
+    required: false
+    default: sarif
+  output:
+    description: Where to write the report
+    required: false
+    default: sheetsentry.sarif
+  select:
+    description: Only these rules, comma separated (for example SD)
+    required: false
+  ignore:
+    description: Exclude these rules, comma separated
+    required: false
+
+outputs:
+  report:
+    description: Path to the report file
+    value: ${{ inputs.output }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install SheetSentry
+      shell: bash
+      run: pip install --quiet sheetsentry
+
+    - name: Check spreadsheets
+      shell: bash
+      env:
+        SS_FILES: ${{ inputs.files }}
+        SS_FORMAT: ${{ inputs.format }}
+        SS_FAIL_ON: ${{ inputs.fail-on }}
+        SS_OUTPUT: ${{ inputs.output }}
+        SS_SELECT: ${{ inputs.select }}
+        SS_IGNORE: ${{ inputs.ignore }}
+      run: |
+        set -euo pipefail
+        shopt -s globstar nullglob
+        # Inputs travel through the environment rather than being interpolated
+        # into the script: a glob expanded by the runner would be re-split by
+        # the shell, and anything else would be executed.
+        files=($SS_FILES)
+        if [ ${#files[@]} -eq 0 ]; then
+          echo "SheetSentry: no matching files, skipping"
+          exit 0
+        fi
+        args=(audit "${files[@]}" --format "$SS_FORMAT" --fail-on "$SS_FAIL_ON" --output "$SS_OUTPUT")
+        [ -n "$SS_SELECT" ] && args+=(--select "$SS_SELECT")
+        [ -n "$SS_IGNORE" ] && args+=(--ignore "$SS_IGNORE")
+        sheetsentry "${args[@]}"
