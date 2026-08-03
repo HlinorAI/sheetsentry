@@ -152,6 +152,9 @@ class Sheet:
 class Book:
     path: Path
     sheets: list[Sheet] = field(default_factory=list)
+    named_ranges: dict[str, str] = field(default_factory=dict)
+    """Workbook-level defined names mapped to their destination. Sheet-local
+    names are out of scope for v0.2."""
     has_macros: bool = False
     cache_is_empty: bool = False
     """The workbook was never recalculated: the value cache is empty and
@@ -164,12 +167,34 @@ class Book:
         return None
 
 
+def _read_named_ranges(wb) -> dict[str, str]:
+    """Defined names mapped to their destination.
+
+    openpyxl has moved this API around between versions, so the read is
+    defensive: a workbook that cannot report its defined names is worth less
+    than a crash on every other file.
+    """
+    result: dict[str, str] = {}
+    names = getattr(wb, "defined_names", None)
+    if names is None:
+        return result
+    try:
+        items = names.items()
+    except AttributeError:  # pragma: no cover - very old openpyxl
+        items = ((d.name, d) for d in names.definedName)
+    for name, definition in items:
+        destination = getattr(definition, "attr_text", None) or getattr(definition, "value", "")
+        result[str(name)] = str(destination)
+    return result
+
+
 def load(path: str | Path) -> Book:
     path = Path(path)
     formulas_wb = load_workbook(path, data_only=False)
     values_wb = load_workbook(path, data_only=True)
 
     book = Book(path=path, has_macros=getattr(formulas_wb, "vba_archive", None) is not None)
+    book.named_ranges = _read_named_ranges(formulas_wb)
 
     formula_cells = 0
     cached_values = 0

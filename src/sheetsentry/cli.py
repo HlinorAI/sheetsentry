@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import checks, report
-from .checks import REGISTRY
+from .checks import DIFF_REGISTRY, REGISTRY
 from .finding import Severity, at_least
 from .workbook import load
 
@@ -27,6 +27,46 @@ def _split(value: str | None) -> list[str] | None:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+def _load(name: str):
+    """Open a workbook, or explain in one line why it could not be opened."""
+    path = Path(name)
+    if not path.exists():
+        return None, f"sheetsentry: file not found: {path}"
+    if path.suffix.lower() not in {".xlsx", ".xlsm"}:
+        return None, f"sheetsentry: {path.name} - only .xlsx and .xlsm are supported"
+    try:
+        return load(path), None
+    except Exception as exc:  # noqa: BLE001 - the user needs a reason, not a traceback
+        return None, f"sheetsentry: cannot open {path.name}: {exc}"
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    old_book, error = _load(args.old)
+    if error:
+        print(error, file=sys.stderr)
+        return EXIT_ERROR
+    new_book, error = _load(args.new)
+    if error:
+        print(error, file=sys.stderr)
+        return EXIT_ERROR
+
+    findings = checks.run_diff(
+        old_book, new_book, select=_split(args.select), ignore=_split(args.ignore)
+    )
+    title = f"{Path(args.old).name} -> {Path(args.new).name}"
+    body = report.render(args.format, Path(args.new), findings, title=title)
+
+    if args.output:
+        Path(args.output).write_text(body + "\n", encoding="utf-8")
+    else:
+        print(body)
+
+    if args.fail_on == "never":
+        return EXIT_OK
+    threshold = Severity(args.fail_on)
+    return EXIT_FINDINGS if any(at_least(f.severity, threshold) for f in findings) else EXIT_OK
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
     threshold = Severity(args.fail_on) if args.fail_on != "never" else None
     outputs: list[str] = []
@@ -35,22 +75,9 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
     for name in args.files:
         path = Path(name)
-        if not path.exists():
-            print(f"sheetsentry: file not found: {path}", file=sys.stderr)
-            failed = True
-            continue
-        if path.suffix.lower() not in {".xlsx", ".xlsm"}:
-            print(
-                f"sheetsentry: {path.name} - only .xlsx and .xlsm are supported",
-                file=sys.stderr,
-            )
-            failed = True
-            continue
-
-        try:
-            book = load(path)
-        except Exception as exc:  # noqa: BLE001 - the user needs a reason, not a traceback
-            print(f"sheetsentry: cannot open {path.name}: {exc}", file=sys.stderr)
+        book, error = _load(name)
+        if error:
+            print(error, file=sys.stderr)
             failed = True
             continue
 
@@ -72,10 +99,13 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_rules(args: argparse.Namespace) -> int:
-    for rule in sorted(REGISTRY):
-        meta = REGISTRY[rule]
-        print(f"{meta.rule}  {meta.severity.value:<8} {meta.title}")
-        print(f"          {meta.summary}")
+    for heading, registry in (("audit", REGISTRY), ("diff", DIFF_REGISTRY)):
+        print(f"{heading}:")
+        for rule in sorted(registry):
+            meta = registry[rule]
+            print(f"  {meta.rule}  {meta.severity.value:<8} {meta.title}")
+            print(f"            {meta.summary}")
+        print()
     return EXIT_OK
 
 
@@ -124,10 +154,27 @@ def build_parser() -> argparse.ArgumentParser:
     rules = sub.add_parser("rules", help="List every rule")
     rules.set_defaults(func=cmd_rules)
 
-    diff = sub.add_parser("diff", help="Compare two versions of a file (v0.2)")
-    diff.add_argument("old", nargs="?")
-    diff.add_argument("new", nargs="?")
-    diff.set_defaults(func=_not_yet("diff", "0.2"))
+    diff = sub.add_parser(
+        "diff",
+        help="Compare two versions of the same file",
+        description=(
+            "Reports how the structure changed, not how the numbers changed. "
+            "Values move every week; columns and formulas move rarely and on purpose."
+        ),
+    )
+    diff.add_argument("old", metavar="OLD")
+    diff.add_argument("new", metavar="NEW")
+    diff.add_argument("--format", choices=["text", "json", "sarif"], default="text")
+    diff.add_argument(
+        "--fail-on",
+        choices=["error", "warning", "info", "never"],
+        default="error",
+        help="severity that makes the command exit 1 (default: error)",
+    )
+    diff.add_argument("--select", metavar="IDS", help="only these rules: DF010 or DF")
+    diff.add_argument("--ignore", metavar="IDS", help="exclude these rules: DF001")
+    diff.add_argument("-o", "--output", metavar="PATH", help="write the report to a file")
+    diff.set_defaults(func=cmd_diff)
 
     test = sub.add_parser("test", help="Check a file against YAML rules (v0.3)")
     test.add_argument("files", nargs="*")

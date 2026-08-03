@@ -11,7 +11,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from .checks import REGISTRY
+from .checks import DIFF_REGISTRY, REGISTRY
 from .finding import Finding, Severity
 from .text import n_plural
 
@@ -28,8 +28,8 @@ _COUNTED = {
 _SARIF_LEVEL = {Severity.ERROR: "error", Severity.WARNING: "warning", Severity.INFO: "note"}
 
 
-def text(path: Path, findings: list[Finding]) -> str:
-    lines = [f"{path.name}"]
+def text(path: Path, findings: list[Finding], title: str | None = None) -> str:
+    lines = [title or path.name]
 
     if not findings:
         lines.append("  No findings.")
@@ -58,10 +58,11 @@ def text(path: Path, findings: list[Finding]) -> str:
     return "\n".join(lines)
 
 
-def as_json(path: Path, findings: list[Finding]) -> str:
+def as_json(path: Path, findings: list[Finding], title: str | None = None) -> str:
     counts = Counter(f.severity.value for f in findings)
     payload = {
         "file": str(path),
+        "subject": title or path.name,
         "summary": {
             "total": len(findings),
             "error": counts.get("error", 0),
@@ -73,7 +74,7 @@ def as_json(path: Path, findings: list[Finding]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def as_sarif(path: Path, findings: list[Finding]) -> str:
+def as_sarif(path: Path, findings: list[Finding], title: str | None = None) -> str:
     """SARIF 2.1.0 for GitHub code scanning.
 
     A limitation worth knowing: a spreadsheet cell has no line number in the
@@ -81,17 +82,20 @@ def as_sarif(path: Path, findings: list[Finding]) -> str:
     real address (`Sheet!B12`) in the message text. Without a location GitHub
     rejects the upload.
     """
+    # Rule metadata lives in two registries: audit rules and diff rules.
+    # SARIF needs a descriptor for every ruleId it sees, whichever produced it.
+    known = {**REGISTRY, **DIFF_REGISTRY}
     used = sorted({f.rule for f in findings})
     rules = [
         {
             "id": rule,
-            "name": REGISTRY[rule].title,
-            "shortDescription": {"text": REGISTRY[rule].title},
-            "fullDescription": {"text": REGISTRY[rule].summary},
-            "defaultConfiguration": {"level": _SARIF_LEVEL[REGISTRY[rule].severity]},
+            "name": known[rule].title,
+            "shortDescription": {"text": known[rule].title},
+            "fullDescription": {"text": known[rule].summary},
+            "defaultConfiguration": {"level": _SARIF_LEVEL[known[rule].severity]},
         }
         for rule in used
-        if rule in REGISTRY
+        if rule in known
     ]
 
     results = [
@@ -133,9 +137,9 @@ def as_sarif(path: Path, findings: list[Finding]) -> str:
     )
 
 
-def render(fmt: str, path: Path, findings: list[Finding]) -> str:
+def render(fmt: str, path: Path, findings: list[Finding], title: str | None = None) -> str:
     if fmt == "json":
-        return as_json(path, findings)
+        return as_json(path, findings, title)
     if fmt == "sarif":
-        return as_sarif(path, findings)
-    return text(path, findings)
+        return as_sarif(path, findings, title)
+    return text(path, findings, title)

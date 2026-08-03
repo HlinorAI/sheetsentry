@@ -253,18 +253,34 @@ Whoever opens the file will not see it, though visible sheets may reference it.
 
 The `sheetsentry diff old.xlsx new.xlsx` command. The point is code review for spreadsheets: show changes in structure rather than in values, because values change constantly while structure changes rarely and deliberately.
 
-| ID | Finding | Level |
-|---|---|---|
-| `DF001` | Formula changed | `info` |
-| `DF002` | Formula replaced by a constant | `error` |
-| `DF003` | Constant replaced by a formula | `info` |
-| `DF004` | Range boundaries in a formula changed | `warning` |
-| `DF005` | Sheet added, removed or renamed | `warning` |
-| `DF006` | Named range changed or deleted | `warning` |
-| `DF010` | Schema drift: columns reordered, renamed, added or removed | `error` |
-| `DF011` | Column number format changed (percent vs fraction, currency) | `warning` |
+| ID | Finding | Level | Status |
+|---|---|---|---|
+| `DF001` | Formula changed | `info` | v0.2 |
+| `DF002` | Formula replaced by a constant | `error` | v0.2 |
+| `DF003` | Constant replaced by a formula | `info` | v0.2 |
+| `DF004` | Aggregate range changed | `warning` | v0.2 |
+| `DF005` | Sheet added or removed | `warning` | v0.2 |
+| `DF006` | Named range changed or deleted | `warning` | v0.2 |
+| `DF010` | Schema drift: columns reordered, renamed, added or removed | `error` | v0.2 |
+| `DF011` | Column number format changed | `warning` / `error` | v0.2 |
 
 `DF010` is the decisive check for the file-exchange scenario: a reordering of columns in a weekly feed is the failure that arrives most quietly.
+
+### How the comparison is scoped
+
+**Values are not compared, structure is.** In a weekly feed the numbers change every time; reporting them would be noise that buries the signal. What changes rarely, and always on purpose, is the shape of the file.
+
+**Cells are matched by coordinate.** This is simple and predictable, and it has one consequence worth stating: inserting a row shifts everything below it, so every shifted formula looks changed. That is why the cell-level rules aggregate per sheet - a shifted sheet yields one line with a count, not four hundred findings - and why `DF001` sits at `info` while `DF002` does not.
+
+### Judgement calls inside DF010
+
+**A rename is not a removal plus an addition.** When a column keeps its position but takes a name that exists nowhere else in either version, it is reported as a rename. That distinction matters to the reader: a rename breaks name-based matching, a removal breaks everything.
+
+**Reordering is judged only on surviving columns.** Additions and removals shift positions by themselves; without this, appending one column at the end would make every file look reordered.
+
+**An addition is only a warning.** New columns usually extend a feed rather than break it. They still matter to a strict importer that pins the column count, which is why they are reported at all.
+
+**Percent against plain number is an error, not a warning.** The two look almost the same on screen while the stored values differ by a factor of one hundred.
 
 ---
 
@@ -281,5 +297,5 @@ The `sheetsentry diff old.xlsx new.xlsx` command. The point is code review for s
 | Version | Contents |
 |---|---|
 | **0.1** | `audit`: SD001-SD005, SF001-SF005, SW004-SW005. text/json/sarif reports, exit codes, GitHub Action |
-| **0.2** | `diff`: DF001-DF006, DF010-DF011. Checks SD006, SF006, SW001-SW003 |
+| **0.2** | `diff`: DF001-DF006, DF010-DF011 (done). Remaining: SD006, SF006, SW001-SW003 |
 | **0.3** | `test` with YAML rules. SF007, SF010 (mini-evaluator). Google Sheets monitoring, already part of the paid tier |

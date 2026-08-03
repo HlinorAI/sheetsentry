@@ -89,5 +89,5 @@ def test_rules_command_lists_every_check(capsys):
 
 
 def test_unimplemented_commands_say_when(capsys):
-    assert main(["diff", "a.xlsx", "b.xlsx"]) == EXIT_ERROR
-    assert "0.2" in capsys.readouterr().err
+    assert main(["test", "a.xlsx"]) == EXIT_ERROR
+    assert "0.3" in capsys.readouterr().err
