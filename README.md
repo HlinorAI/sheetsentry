@@ -104,6 +104,7 @@ Exit codes: `0` clean, `1` findings at or above `--fail-on` (default `error`), `
 | `SD003` | Duplicates in a key column |
 | `SD004` | Mixed types in a column |
 | `SD005` | Dates stored as text |
+| `SD006` | Blank row inside a table |
 
 **Formulas (`SF`)** - what quietly corrupts a calculation:
 
@@ -114,8 +115,16 @@ Exit codes: `0` clean, `1` findings at or above `--fail-on` (default `error`), `
 | `SF003` | Aggregate range misses data |
 | `SF004` | Error values `#REF!`, `#DIV/0!` |
 | `SF005` | Constant hardcoded into a formula |
+| `SF006` | Reference to another workbook |
 
-**Hygiene (`SW`)** - the boundaries of the analysis: macros, hidden sheets.
+**Hygiene (`SW`)** - structure that reads differently to a human and to a machine, plus the boundaries of the analysis:
+
+| | |
+|---|---|
+| `SW001` | Hidden rows inside an aggregated range |
+| `SW002` | Merged cells inside a data block |
+| `SW003` | Named range points nowhere |
+| `SW004` `SW005` | Macros present, hidden sheets |
 
 **Version differences (`DF`)** - what `sheetsentry diff` reports:
 
@@ -146,7 +155,7 @@ Better said up front than discovered the hard way.
 | **0.2** | `diff` - two-version comparison including column schema drift |
 | **0.3** | `test` - YAML rules for business invariants |
 
-`diff` has landed. Still open in 0.2: hidden rows inside aggregated ranges, merged cells in data blocks, broken named ranges, external workbook references.
+0.1 and 0.2 are complete: 25 checks, 17 in `audit` and 8 in `diff`.
 
 ## Development
 

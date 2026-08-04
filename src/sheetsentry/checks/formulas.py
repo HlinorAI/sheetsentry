@@ -243,6 +243,45 @@ def sf004(book: Book) -> Iterator[Finding]:
 
 
 @check(
+    "SF006",
+    "Reference to another workbook",
+    Severity.WARNING,
+    "The file depends on a second file the recipient may not have",
+)
+def sf006(book: Book) -> Iterator[Finding]:
+    """A file that reads from another file is only whole on the machine that
+    built it. Sent onwards, it keeps the last cached numbers and gives no
+    sign that they stopped updating."""
+    for sheet in book.sheets:
+        hits: list[Cell] = []
+        targets: set[str] = set()
+        for cell in sheet.cells.values():
+            if not cell.is_formula:
+                continue
+            found = F.external_references(cell.formula)
+            if found:
+                hits.append(cell)
+                targets.update(found)
+        if not hits:
+            continue
+        hits.sort(key=lambda c: (c.row, c.col))
+        yield Finding(
+            rule="SF006",
+            title="Reference to another workbook",
+            severity=Severity.WARNING,
+            message=(
+                f"{n_plural(len(hits), 'formula reads', 'formulas read')} from another "
+                "workbook. Away from the machine that built this file those values stop "
+                "updating without any visible sign."
+            ),
+            sheet=sheet.name,
+            cells=[c.coord for c in hits[:5]],
+            evidence=f"{hits[0].formula} (targets: {', '.join(sorted(targets)[:3])})",
+            count=len(hits),
+        )
+
+
+@check(
     "SF005",
     "Constant hardcoded into a formula",
     Severity.INFO,

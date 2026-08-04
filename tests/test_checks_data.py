@@ -89,6 +89,40 @@ class TestSD004MixedTypes:
         assert findings(path, "SD004") == []
 
 
+class TestSD006BlankRows:
+    def test_single_gap_in_a_block_is_reported(self, build, findings):
+        rows = [[f"A{i}", "item", i] for i in range(1, 6)]
+        rows.append([None, None, None])  # the row a naive parser stops at
+        rows += [[f"A{i}", "item", i] for i in range(6, 11)]
+        path = build(Price=feed(rows))
+        found = findings(path, "SD006")
+        assert len(found) == 1
+        assert found[0].severity is Severity.INFO
+        assert found[0].evidence == "row 7"
+
+    def test_solid_block_is_silent(self, build, findings):
+        rows = [[f"A{i}", "item", i] for i in range(1, 11)]
+        path = build(Price=feed(rows))
+        assert findings(path, "SD006") == []
+
+    def test_blank_rows_used_as_layout_are_not_flagged(self, build, findings):
+        # Four separate gaps: this sheet separates sections deliberately,
+        # and saying otherwise would be noise on every file of that shape.
+        rows = []
+        for block in range(4):
+            rows += [[f"A{block}{i}", "item", i] for i in range(1, 4)]
+            rows.append([None, None, None])
+        rows += [[f"AZ{i}", "item", i] for i in range(1, 4)]
+        path = build(Price=feed(rows))
+        assert findings(path, "SD006") == []
+
+    def test_trailing_blank_rows_are_not_a_gap(self, build, findings):
+        rows = [[f"A{i}", "item", i] for i in range(1, 11)]
+        rows += [[None, None, None], [None, None, None]]
+        path = build(Price=feed(rows))
+        assert findings(path, "SD006") == []
+
+
 class TestSD005TextDates:
     def test_text_dates_are_reported_with_ambiguity_note(self, build, findings):
         rows = [[f"A{i}", "01.02.2026", i] for i in range(1, 12)]

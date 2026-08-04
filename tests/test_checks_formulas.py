@@ -136,6 +136,31 @@ class TestSF004ErrorValues:
         assert notes and "never recalculated" in notes[0].message
 
 
+class TestSF006ExternalReference:
+    def test_link_index_reference_is_reported(self, build, findings):
+        path = build(Model=[["Rate", "=[1]Rates!B2"], ["Total", "=A1*2"]])
+        found = findings(path, "SF006")
+        assert len(found) == 1
+        assert found[0].severity is Severity.WARNING
+        assert "[1]" in found[0].evidence
+
+    def test_workbook_filename_reference_is_reported(self, build, findings):
+        path = build(Model=[["Total", "=SUM('[Prices.xlsx]Sheet1'!A1:A5)"]])
+        found = findings(path, "SF006")
+        assert len(found) == 1
+        assert "Prices.xlsx" in found[0].evidence
+
+    def test_structured_table_reference_is_not_external(self, build, findings):
+        # Table1[Amount] uses brackets too, and flagging it would fire on
+        # every workbook that uses tables.
+        path = build(Model=[["Total", "=SUM(Table1[Amount])"], ["Row", "=[@Qty]*2"]])
+        assert findings(path, "SF006") == []
+
+    def test_ordinary_formulas_are_silent(self, build, findings):
+        path = build(Model=[["Total", "=SUM(A1:A5)"], ["Other", "=Sheet2!B2"]])
+        assert findings(path, "SF006") == []
+
+
 class TestSF005HardcodedConstant:
     def test_repeated_rate_is_reported(self, build, findings):
         path = build(

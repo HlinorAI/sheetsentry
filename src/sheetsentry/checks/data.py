@@ -240,6 +240,66 @@ def sd004(book: Book) -> Iterator[Finding]:
 
 
 @check(
+    "SD006",
+    "Blank row inside a table",
+    Severity.INFO,
+    "A gap in the middle of a data block: many parsers stop there and drop the tail",
+)
+def sd006(book: Book) -> Iterator[Finding]:
+    """A blank row is where a naive reader decides the table ended.
+
+    Distinguishing an accident from a layout choice is the whole difficulty
+    here. A sheet that uses blank rows to separate sections has many of them;
+    one or two gaps in an otherwise solid block is the case worth raising.
+    """
+    for sheet in book.sheets:
+        header = sheet.header_row()
+        start = (header + 1) if header else 1
+
+        filled = [
+            row
+            for row in range(start, sheet.max_row + 1)
+            if any(
+                (cell := sheet.cell(row, col)) is not None and not cell.is_empty
+                for col in range(1, sheet.max_col + 1)
+            )
+        ]
+        if len(filled) < 3:
+            continue
+
+        blanks = [row for row in range(filled[0], filled[-1] + 1) if row not in set(filled)]
+        if not blanks:
+            continue
+
+        gaps: list[list[int]] = []
+        for row in blanks:
+            if gaps and row == gaps[-1][-1] + 1:
+                gaps[-1].append(row)
+            else:
+                gaps.append([row])
+
+        if len(gaps) > 2:
+            continue  # blank rows are this sheet's layout device, not a slip
+
+        yield Finding(
+            rule="SD006",
+            title="Blank row inside a table",
+            severity=Severity.INFO,
+            message=(
+                f"{n_plural(len(blanks), 'row is', 'rows are')} empty in the middle of the "
+                f"data block, which continues to row {filled[-1]}. A reader that stops at the "
+                "first blank row would keep only part of this table."
+            ),
+            sheet=sheet.name,
+            cells=[f"A{gap[0]}" for gap in gaps],
+            evidence=", ".join(
+                f"rows {gap[0]}-{gap[-1]}" if len(gap) > 1 else f"row {gap[0]}" for gap in gaps
+            ),
+            count=len(blanks),
+        )
+
+
+@check(
     "SD005",
     "Dates stored as text",
     Severity.WARNING,

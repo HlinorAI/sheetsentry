@@ -107,11 +107,15 @@ Then repeats are located. Empty cells do not participate.
 
 ---
 
-### SD006 - Blank rows and columns inside a table
+### SD006 - Blank row inside a table
 
 **Level:** `info` - **Status:** v0.2
 
-A fully blank row in the middle of a data block: most parsers treat it as the end of the table and silently drop the tail.
+**What it catches.** A fully blank row in the middle of a data block. Most parsers treat it as the end of the table and silently drop the tail.
+
+**How it is detected.** Rows between the first and last populated row of the data area that hold nothing at all. Contiguous blanks are grouped into gaps and reported together with the row where the data actually ends.
+
+**False-positive risk.** Moderate, and the whole difficulty lies in telling an accident from a layout choice. Mitigation: a sheet with more than two separate gaps is using blank rows to separate sections, and is skipped entirely. Trailing blanks are not gaps. The level stays `info` even then, because visual separation remains a legitimate style.
 
 ---
 
@@ -189,11 +193,15 @@ A fully blank row in the middle of a data block: most parsers treat it as the en
 
 ---
 
-### SF006 - Reference to an external workbook
+### SF006 - Reference to another workbook
 
 **Level:** `warning` - **Status:** v0.2
 
-Formulas of the form `[1]Price!B2`: the file depends on another file the recipient does not have.
+**What it catches.** Formulas of the form `[1]Rates!B2` or `'[Prices.xlsx]Sheet1'!A1`. The file is only whole on the machine that built it; sent onwards it keeps the last cached numbers and gives no sign that they stopped updating.
+
+**How it is detected.** After string literals are masked, bracketed contents are matched against a link index (`[1]`) or a workbook filename (`[Book.xlsx]`).
+
+**False-positive risk.** Low, but only because of that last detail. Structured table references such as `Table1[Amount]` and `[@Qty]` use brackets too, and matching the bracket alone would fire on every workbook that uses tables. Matching what is inside the bracket separates the two cleanly.
 
 ---
 
@@ -223,17 +231,31 @@ A cycle in the dependency graph. Requires building the full reference graph; the
 
 **Level:** `warning` - **Status:** v0.2
 
-The reader sees one set of addends; the formula counts another.
+**What it catches.** `SUM` still counts hidden rows. Someone who hides a row to tidy a printout does not always realise the total did not change.
+
+**How it is detected.** For every aggregate range in a formula, rows inside that range that are hidden and hold a non-empty cell.
+
+**False-positive risk.** Moderate: hiding helper rows is common practice. Mitigation: hidden rows that are empty inside the range are not reported, since they change nothing about the total.
 
 ### SW002 - Merged cells inside a data block
 
 **Level:** `warning` - **Status:** v0.2
 
-They break `VLOOKUP`, sorting and row-wise import. Merges in the header row are not flagged.
+**What it catches.** A merge fills only its top-left cell; every other cell in the range is empty. That is what `VLOOKUP`, sorting and row-by-row import see, while the reader sees a value spanning the block.
+
+**How it is detected.** Merged ranges that extend at or below the first data row.
+
+**False-positive risk.** Low. Merges in a title or header row are ordinary formatting and are excluded by the row test.
 
 ### SW003 - Named range points nowhere
 
 **Level:** `error` - **Status:** v0.2
+
+**What it catches.** A defined name whose destination is `#REF!` or empty. Every formula using it returns an error, while the name keeps autocompleting as though it worked.
+
+**How it is detected.** Workbook-level defined names are read at load time and their destinations inspected. Sheet-local names are out of scope for v0.2.
+
+**False-positive risk.** None.
 
 ### SW004 - Workbook contains VBA macros
 
@@ -297,5 +319,5 @@ The `sheetsentry diff old.xlsx new.xlsx` command. The point is code review for s
 | Version | Contents |
 |---|---|
 | **0.1** | `audit`: SD001-SD005, SF001-SF005, SW004-SW005. text/json/sarif reports, exit codes, GitHub Action |
-| **0.2** | `diff`: DF001-DF006, DF010-DF011 (done). Remaining: SD006, SF006, SW001-SW003 |
+| **0.2** | `diff`: DF001-DF006, DF010-DF011. Checks SD006, SF006, SW001-SW003. Complete |
 | **0.3** | `test` with YAML rules. SF007, SF010 (mini-evaluator). Google Sheets monitoring, already part of the paid tier |

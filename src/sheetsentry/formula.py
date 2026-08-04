@@ -194,6 +194,21 @@ def aggregate_ranges(formula: str) -> list[tuple[str, int, int, int, int]]:
     return found
 
 
+# An external reference carries either a link index (`[1]Sheet!A1`) or a
+# workbook filename (`'[Prices.xlsx]Sheet'!A1`). Structured table references
+# such as `Table1[Amount]` or `[@Qty]` also use brackets, which is why the
+# bracket contents are matched instead of the bracket alone.
+_EXTERNAL_REF_RE = re.compile(r"\[(?:\d+|[^\]]*\.xls[xmb]?)\]", re.IGNORECASE)
+
+
+def external_references(formula: str) -> list[str]:
+    """Bracketed references to another workbook, if any."""
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return []
+    masked, _ = _mask_strings(formula)
+    return _EXTERNAL_REF_RE.findall(masked)
+
+
 def has_ref_error(formula: str) -> bool:
     """`#REF!` in the formula text survives sheet deletion and an empty cache."""
     return isinstance(formula, str) and "#REF!" in formula.upper()
