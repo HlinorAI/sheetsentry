@@ -70,6 +70,11 @@ class TestFormats:
         main(["audit", str(broken(build))])
         capsys.readouterr().out.encode("ascii")
 
+    def test_json_findings_have_stable_ids(self, build, capsys):
+        main(["audit", str(broken(build)), "--format", "json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["findings"][0]["finding_id"].startswith("finding_")
+
 
 class TestSelection:
     def test_select_narrows_to_family(self, build, capsys):
@@ -86,6 +91,24 @@ def test_rules_command_lists_every_check(capsys):
     out = capsys.readouterr().out
     for rule in ("SD001", "SF001", "SF003", "SW004"):
         assert rule in out
+
+
+def test_review_reconciles_resolved_finding(tmp_path, build, capsys):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({"file": "clean.xlsx", "findings": []}), encoding="utf-8")
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"version": 1, "items": [{
+        "finding_id": "finding_demo",
+        "status": "correction_required",
+        "owner": "finance",
+        "next_action": "rerun audit",
+        "due_at": "2099-01-01T00:00:00Z",
+    }]}), encoding="utf-8")
+
+    assert main(["review", str(report), "--state", str(state), "--format", "json"]) == EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["records"][0]["status"] == "resolved"
+    assert payload["records"][0]["verification"] == "not_present_in_audit"
 
 
 def test_unimplemented_commands_say_when(capsys):

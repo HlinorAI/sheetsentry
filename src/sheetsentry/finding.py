@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
 
 
 class Severity(str, Enum):
@@ -62,8 +63,20 @@ class Finding:
             return f"{self.sheet}!{head} (+{len(self.cells) - 1})"
         return f"{self.sheet}!{head}"
 
+    @property
+    def finding_id(self) -> str:
+        """Stable local identity used to connect a finding to a recheck."""
+        identity = "\x00".join([
+            self.rule,
+            self.sheet,
+            ",".join(self.cells),
+            self.evidence or "",
+        ]).casefold()
+        return f"finding_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:16]}"
+
     def to_dict(self) -> dict:
         return {
+            "finding_id": self.finding_id,
             "rule": self.rule,
             "title": self.title,
             "severity": self.severity.value,

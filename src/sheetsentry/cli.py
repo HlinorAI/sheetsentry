@@ -8,6 +8,7 @@ is enough.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from . import checks, report
 from .checks import DIFF_REGISTRY, REGISTRY
 from .finding import Severity, at_least
 from .workbook import load
+from .workflow import load_state, reconcile, render_text
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -109,6 +111,23 @@ def cmd_rules(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    try:
+        report_payload = json.loads(Path(args.report).read_text(encoding="utf-8"))
+        state = load_state(Path(args.state))
+        result = reconcile(report_payload, state)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"sheetsentry: review failed: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    body = json.dumps(result, ensure_ascii=False, indent=2) if args.format == "json" else render_text(result)
+    if args.output:
+        Path(args.output).write_text(body + "\n", encoding="utf-8")
+    else:
+        print(body)
+    return EXIT_OK
+
+
 def _not_yet(name: str, version: str):
     def handler(args: argparse.Namespace) -> int:
         print(
@@ -153,6 +172,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     rules = sub.add_parser("rules", help="List every rule")
     rules.set_defaults(func=cmd_rules)
+
+    review = sub.add_parser("review", help="Reconcile an audit report with a local review state")
+    review.add_argument("report", metavar="REPORT.json")
+    review.add_argument("--state", required=True, metavar="STATE.json")
+    review.add_argument("--format", choices=["text", "json"], default="text")
+    review.add_argument("-o", "--output", metavar="PATH", help="write the reconciliation to a file")
+    review.set_defaults(func=cmd_review)
 
     diff = sub.add_parser(
         "diff",

@@ -50,6 +50,7 @@ sheetsentry audit *.xlsx --format json       # for a script
 sheetsentry audit file.xlsx --format sarif   # for GitHub code scanning
 sheetsentry audit file.xlsx --select SD      # data checks only
 sheetsentry audit file.xlsx --ignore SF005   # everything but hardcoded constants
+sheetsentry review audit-report.json --state review-state.json  # recheck findings locally
 sheetsentry rules                            # list every rule
 ```
 
@@ -146,6 +147,19 @@ Better said up front than discovered the hard way.
 - **It does not support** `.xls`, VBA, Power Query, external connections or add-ins.
 - **It does not judge the business meaning of numbers.** "Margin is never above 100%" is one company's rule; those checks belong to `sheetsentry test` with a YAML config.
 - **It does not edit your file.** It reports and proves; a human decides.
+
+For the downstream review loop, JSON reports include a stable `finding_id`.
+Keep a local `review-state.json` with `status` (`open`, `correction_required`,
+`accepted-risk`, or `resolved`), `owner` and `next_action`, then reconcile a
+later audit without editing the workbook:
+
+```bash
+sheetsentry review audit-report.json --state review-state.json --format text
+```
+
+When a correction-required finding is absent from the later audit it is shown
+as `resolved`; a resolved finding that remains is shown as `reopened`. The
+review command does not modify the state file or the spreadsheet.
 
 ## Roadmap
 
