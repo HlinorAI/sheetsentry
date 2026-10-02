@@ -71,9 +71,11 @@ def cmd_diff(args: argparse.Namespace) -> int:
 
 def cmd_audit(args: argparse.Namespace) -> int:
     threshold = Severity(args.fail_on) if args.fail_on != "never" else None
-    outputs: list[str] = []
     worst_hit = False
     failed = False
+    # (path, findings, error) per requested file; error is the reason the
+    # workbook could not be opened, findings is None then.
+    entries: list[tuple[Path, list | None, str | None]] = []
 
     for name in args.files:
         path = Path(name)
@@ -81,15 +83,34 @@ def cmd_audit(args: argparse.Namespace) -> int:
         if error:
             print(error, file=sys.stderr)
             failed = True
+            entries.append((path, None, error))
             continue
 
         findings = checks.run(book, select=_split(args.select), ignore=_split(args.ignore))
-        outputs.append(report.render(args.format, path, findings))
+        entries.append((path, findings, None))
 
         if threshold and any(at_least(f.severity, threshold) for f in findings):
             worst_hit = True
 
-    body = "\n\n".join(outputs)
+    if args.format == "json":
+        if len(entries) == 1 and entries[0][2] is None:
+            body = report.as_json(entries[0][0], entries[0][1])
+        else:
+            body = report.aggregate_json(entries)
+    elif args.format == "sarif":
+        if len(entries) == 1 and entries[0][2] is None:
+            body = report.as_sarif(entries[0][0], entries[0][1])
+        else:
+            body = report.aggregate_sarif(entries)
+    else:
+        # Text stays one human-readable block per processed file; unreadable
+        # files are already explained on stderr.
+        body = "\n\n".join(
+            report.render("text", path, findings)
+            for path, findings, error in entries
+            if error is None
+        )
+
     if args.output:
         Path(args.output).write_text(body + "\n", encoding="utf-8")
     else:
@@ -114,6 +135,14 @@ def cmd_rules(args: argparse.Namespace) -> int:
 def cmd_review(args: argparse.Namespace) -> int:
     try:
         report_payload = json.loads(Path(args.report).read_text(encoding="utf-8"))
+        if isinstance(report_payload, dict) and "reports" in report_payload:
+            print(
+                "sheetsentry: review expects a single-file audit report; this file is a "
+                "multi-file envelope. Its per-file payloads live in the 'reports' array - "
+                "run 'audit' on one file with --format json to get a reviewable report.",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
         state = load_state(Path(args.state))
         result = reconcile(report_payload, state)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
