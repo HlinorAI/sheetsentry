@@ -8,12 +8,15 @@ severity is already stated by the section heading.
 from __future__ import annotations
 
 import json
+import urllib.parse
 from collections import Counter
 from pathlib import Path
 
 from .checks import DIFF_REGISTRY, REGISTRY
 from .finding import Finding, Severity
 from .text import n_plural
+
+_INFORMATION_URI = "https://github.com/HlinorAI/sheetsentry"
 
 _HEADING = {
     Severity.ERROR: "ERRORS",
@@ -124,10 +127,141 @@ def as_sarif(path: Path, findings: list[Finding], title: str | None = None) -> s
                     "tool": {
                         "driver": {
                             "name": "SheetSentry",
-                            "informationUri": "https://github.com/sheetsentry/sheetsentry",
+                            "informationUri": _INFORMATION_URI,
                             "rules": rules,
                         }
                     },
+                    "results": results,
+                }
+            ],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _artifact_uri(path: Path) -> str:
+    """Relative forward-slash URI for a workbook, spaces encoded.
+
+    The full given path (directories included) is kept so that two files with
+    the same basename in different directories stay distinguishable.
+    """
+    return urllib.parse.quote(path.as_posix(), safe="/:")
+
+
+def _sarif_rules(findings_lists: list[list[Finding]]) -> list[dict]:
+    """One descriptor per distinct ruleId across all inputs, deduplicated."""
+    known = {**REGISTRY, **DIFF_REGISTRY}
+    used = sorted({finding.rule for findings in findings_lists for finding in findings})
+    return [
+        {
+            "id": rule,
+            "name": known[rule].title,
+            "shortDescription": {"text": known[rule].title},
+            "fullDescription": {"text": known[rule].summary},
+            "defaultConfiguration": {"level": _SARIF_LEVEL[known[rule].severity]},
+        }
+        for rule in used
+        if rule in known
+    ]
+
+
+def aggregate_json(
+    entries: list[tuple[Path, list[Finding] | None, str | None]],
+) -> str:
+    """One JSON object for several workbooks (or any failed single run).
+
+    `reports` holds the usual per-file payload for every successfully read
+    workbook; `errors` records the files that could not be opened, so a bad
+    file is never presented as a clean one. Single-file successful audits keep
+    the original root shape instead.
+    """
+    reports: list[dict] = []
+    errors: list[dict] = []
+    for path, findings, error in entries:
+        if error is not None:
+            errors.append({"file": str(path), "error": error})
+        else:
+            reports.append(json.loads(as_json(path, findings or [])))
+    return json.dumps(
+        {"reports": reports, "errors": errors}, ensure_ascii=False, indent=2
+    )
+
+
+def aggregate_sarif(
+    entries: list[tuple[Path, list[Finding] | None, str | None]],
+) -> str:
+    """One SARIF 2.1.0 document for several workbooks (or any failed run).
+
+    One run; rule descriptors deduplicated across inputs; results keep the
+    original workbook path and the cell address in the message. `artifacts`
+    lists every successfully processed workbook, clean ones included, so the
+    coverage of multiple inputs is observable even without findings. Files
+    that could not be opened become tool execution notifications instead of
+    silently disappearing.
+    """
+    successful = [
+        (path, findings or []) for path, findings, error in entries if error is None
+    ]
+    rules = _sarif_rules([findings for _, findings in successful])
+
+    results: list[dict] = []
+    artifacts: list[dict] = []
+    notifications: list[dict] = []
+    seen_uris: set[str] = set()
+    for path, findings, error in entries:
+        if error is not None:
+            notifications.append(
+                {
+                    "level": "error",
+                    "message": {"text": f"{path}: {error}"},
+                }
+            )
+            continue
+        uri = _artifact_uri(path)
+        if uri not in seen_uris:
+            seen_uris.add(uri)
+            artifacts.append({"location": {"uri": uri}})
+        for finding in findings:
+            results.append(
+                {
+                    "ruleId": finding.rule,
+                    "level": _SARIF_LEVEL[finding.severity],
+                    "message": {"text": f"{finding.location()}: {finding.message}"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": uri},
+                                "region": {"startLine": 1},
+                            }
+                        }
+                    ],
+                }
+            )
+
+    return json.dumps(
+        {
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {
+                        "driver": {
+                            "name": "SheetSentry",
+                            "informationUri": _INFORMATION_URI,
+                            "rules": rules,
+                        }
+                    },
+                    "invocations": [
+                        {
+                            # SARIF 2.1.0 keeps tool execution notifications
+                            # under run.invocations[], not on the run itself
+                            # (the run object forbids additional properties).
+                            "executionSuccessful": not notifications,
+                            "toolExecutionNotifications": notifications,
+                        }
+                    ],
+                    "artifacts": artifacts,
                     "results": results,
                 }
             ],

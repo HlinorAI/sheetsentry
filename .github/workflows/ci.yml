@@ -31,3 +31,227 @@ jobs:
         run: |
           sheetsentry rules
           sheetsentry audit --help
+
+  action-smoke:
+    # Runs the actual composite action from a separate checkout of its own
+    # source in a synthetic consumer workspace, starting without SheetSentry
+    # installed and without any PyPI package to fall back on.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the action source into its own directory
+        uses: actions/checkout@v4
+        with:
+          path: action-source
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Assert SheetSentry is not preinstalled
+        run: |
+          if python -m pip show sheetsentry > /dev/null 2>&1; then
+            echo "sheetsentry is already installed; the smoke test must start without it"
+            exit 1
+          fi
+          echo "sheetsentry not installed (expected)"
+
+      - name: Generate synthetic workbooks (clean, SD003 duplicate, SD001 text number)
+        run: |
+          pip install --quiet openpyxl
+          mkdir -p consumer "consumer/sub dir"
+          python - <<'PY'
+          from openpyxl import Workbook
+
+          wb = Workbook()
+          ws = wb.active
+          ws.title = "Data"
+          ws.append(["id", "value"])
+          ws.append([1, "ok"])
+          wb.save("consumer/clean.xlsx")
+
+          rows = [[f"A{i}", "item", i] for i in range(1, 25)]
+          rows[9][0] = "A1"  # duplicated SKU -> SD003 error
+          wb = Workbook()
+          wb.remove(wb.active)
+          ws = wb.create_sheet(title="Price")
+          for row in [["SKU", "Name", "Price"]] + rows:
+              ws.append(row)
+          wb.save("consumer/dupes.xlsx")
+
+          rows = [[f"A{i}", "item", i * 10] for i in range(1, 12)]
+          rows[3][2] = "1 250"  # price arrived as text -> SD001 warning
+          wb = Workbook()
+          wb.remove(wb.active)
+          ws = wb.create_sheet(title="Price")
+          for row in [["SKU", "Name", "Price"]] + rows:
+              ws.append(row)
+          wb.save("consumer/sub dir/year end.xlsx")
+          PY
+
+      - name: Run the composite action with the default recursive pattern (findings expected)
+        id: audit_recursive
+        continue-on-error: true
+        uses: ./action-source
+        with:
+          format: sarif
+          output: consumer/audit.sarif
+          fail-on: error
+
+      - name: The default invocation must have failed on the SD003 error, not crashed
+        run: |
+          echo "outcome: ${STEPS_AUDIT_OUTCOME}, conclusion: ${STEPS_AUDIT_CONCLUSION}"
+          test "$STEPS_AUDIT_OUTCOME" = "failure"
+          test "$STEPS_AUDIT_CONCLUSION" = "success"
+          test -s consumer/audit.sarif
+        env:
+          STEPS_AUDIT_OUTCOME: ${{ steps.audit_recursive.outcome }}
+          STEPS_AUDIT_CONCLUSION: ${{ steps.audit_recursive.conclusion }}
+
+      - name: Run the composite action with a literal path containing spaces
+        uses: ./action-source
+        with:
+          files: consumer/sub dir/year end.xlsx
+          format: json
+          output: consumer/literal.json
+          fail-on: never
+
+      - name: Run the composite action for a JSON envelope
+        uses: ./action-source
+        with:
+          files: consumer/**/*.xlsx
+          format: json
+          output: consumer/audit.json
+          fail-on: never
+
+      - name: Verify installed source metadata and both output documents
+        run: |
+          python - <<'PY'
+          import importlib.metadata as md
+          import json
+          import pathlib
+
+          dist = md.distribution("sheetsentry")
+          direct = json.loads(dist.read_text("direct_url.json") or "{}")
+          url = direct.get("url", "")
+          print("version:", dist.version)
+          print("direct_url:", url)
+          assert "action-source" in url, f"installed from unexpected source: {url}"
+
+          # SARIF: one document, one run, every file mapped, rules deduplicated.
+          sarif = json.loads(pathlib.Path("consumer/audit.sarif").read_text())
+          assert sarif["version"] == "2.1.0"
+          assert len(sarif["runs"]) == 1
+          run = sarif["runs"][0]
+          assert run["tool"]["driver"]["name"] == "SheetSentry"
+          result_uris = {
+              loc["physicalLocation"]["artifactLocation"]["uri"]
+              for res in run["results"] for loc in res["locations"]
+          }
+          assert "consumer/dupes.xlsx" in result_uris, result_uris
+          assert "consumer/sub%20dir/year%20end.xlsx" in result_uris, result_uris
+          rule_ids = {rule["id"] for rule in run["tool"]["driver"]["rules"]}
+          assert {"SD001", "SD003"} <= rule_ids, rule_ids  # SD004 (mixed types) may also fire
+          artifact_uris = {a["location"]["uri"] for a in run["artifacts"]}
+          assert artifact_uris == {
+              "consumer/clean.xlsx",
+              "consumer/dupes.xlsx",
+              "consumer/sub%20dir/year%20end.xlsx",
+          }, artifact_uris
+          print("SARIF OK: one document,", len(run["results"]), "results,", len(artifact_uris), "artifacts")
+
+          # JSON envelope: one object, every file mapped.
+          envelope = json.loads(pathlib.Path("consumer/audit.json").read_text())
+          assert [r["file"] for r in envelope["reports"]] == [
+              "consumer/clean.xlsx",
+              "consumer/dupes.xlsx",
+              "consumer/sub dir/year end.xlsx",
+          ], [r["file"] for r in envelope["reports"]]
+          assert envelope["errors"] == []
+          print("JSON envelope OK:", len(envelope["reports"]), "reports")
+
+          # Literal path with spaces: single-file root shape.
+          literal = json.loads(pathlib.Path("consumer/literal.json").read_text())
+          assert literal["file"] == "consumer/sub dir/year end.xlsx", literal["file"]
+          assert literal["summary"]["warning"] == 1
+          print("Literal spaced path OK:", literal["file"])
+          PY
+
+      - name: Review rejects the multi-file JSON envelope with a clear error
+        run: |
+          cat > consumer/state.json <<'JSON'
+          {"version": 1, "items": []}
+          JSON
+          set +e
+          sheetsentry review consumer/audit.json --state consumer/state.json > review-out.txt 2> review-err.txt
+          code=$?
+          set -e
+          cat review-err.txt
+          test "$code" -eq 2
+          grep -q "multi-file envelope" review-err.txt
+
+      - name: Produce single-file and mixed-unreadable SARIF for the schema check
+        run: |
+          printf 'not a workbook' > consumer/broken.xlsx
+          set +e
+          sheetsentry audit consumer/dupes.xlsx --format sarif -o consumer/single.sarif
+          single_rc=$?
+          sheetsentry audit consumer/clean.xlsx consumer/dupes.xlsx consumer/broken.xlsx --format sarif -o consumer/mixed.sarif
+          mixed_rc=$?
+          set -e
+          test "$single_rc" -eq 1
+          test "$mixed_rc" -eq 2
+
+      - name: Validate every SARIF output against the pinned official OASIS schema
+        run: |
+          pip install --quiet jsonschema==4.23.0
+          python - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import urllib.request
+
+          from jsonschema import Draft4Validator
+
+          SCHEMA_URL = (
+              "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
+              "adbb670c018335b0f384e6dd8819f4ea055d7ee1/sarif-2.1/schema/"
+              "sarif-schema-2.1.0.json"
+          )
+          SCHEMA_SHA256 = "c3b4bb2d6093897483348925aaa73af03b3e3f4bd4ca38cef26dcb4212a2682e"
+
+          schema_path = pathlib.Path("/tmp/sarif-schema-2.1.0.json")
+          with urllib.request.urlopen(SCHEMA_URL) as response:  # TLS verified
+              schema_path.write_bytes(response.read())
+          digest = hashlib.sha256(schema_path.read_bytes()).hexdigest()
+          print("schema sha256:", digest)
+          assert digest == SCHEMA_SHA256, f"pinned schema hash mismatch: {digest}"
+          schema = json.loads(schema_path.read_text())
+          validator = Draft4Validator(schema)
+
+          def valid(document_path):
+              document = json.loads(pathlib.Path(document_path).read_text())
+              errors = sorted(validator.iter_errors(document), key=str)
+              for error in errors:
+                  print(f"  schema violation in {document_path}: {list(error.absolute_path)}: {error.message}")
+              return not errors
+
+          assert valid("consumer/audit.sarif"), "multi-file SARIF failed the official schema"
+          assert valid("consumer/single.sarif"), "single-file SARIF failed the official schema"
+          assert valid("consumer/mixed.sarif"), "mixed unreadable SARIF failed the official schema"
+
+          # Mixed run: the unreadable file stays visible as an invocation notification.
+          mixed = json.loads(pathlib.Path("consumer/mixed.sarif").read_text())
+          invocation = mixed["runs"][0]["invocations"][0]
+          assert invocation["executionSuccessful"] is False
+          assert invocation["toolExecutionNotifications"][0]["level"] == "error"
+
+          # Negative control: the pre-D1 layout (notifications on the run itself)
+          # must be rejected, or this guard is not actually testing anything.
+          pre_d1 = json.loads(pathlib.Path("consumer/mixed.sarif").read_text())
+          pre_d1["runs"][0]["toolExecutionNotifications"] = pre_d1["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+          violations = list(validator.iter_errors(pre_d1))
+          assert violations, "negative control unexpectedly validated - the guard is blind"
+          print("negative control rejected pre-D1 output as expected")
+          PY
