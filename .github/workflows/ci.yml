@@ -174,7 +174,16 @@ jobs:
           # Literal path with spaces: single-file root shape.
           literal = json.loads(pathlib.Path("consumer/literal.json").read_text())
           assert literal["file"] == "consumer/sub dir/year end.xlsx", literal["file"]
-          assert literal["summary"]["warning"] == 1
+          # The SD001 text-number finding must be present; other legitimate
+          # rules (SD004 mixed types fires on this same fixture) are allowed
+          # and only have to agree with the summary counts.
+          rules = {finding["rule"]: finding["severity"] for finding in literal["findings"]}
+          assert rules.get("SD001") == "warning", rules
+          assert literal["summary"]["warning"] == sum(
+              1 for finding in literal["findings"] if finding["severity"] == "warning"
+          )
+          assert literal["summary"]["total"] == len(literal["findings"])
+          assert literal["summary"]["error"] == 0
           print("Literal spaced path OK:", literal["file"])
           PY
 
