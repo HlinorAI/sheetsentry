@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The repository is public. The README no longer asks for private-repository
+  access or a contents-read token; another repository uses the Action directly
+  as `HlinorAI/sheetsentry@<commit-sha>`.
+
 ### Fixed
 
 - The composite GitHub Action installs SheetSentry from the action's own

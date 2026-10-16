@@ -36,7 +36,7 @@ Total: 3 findings (2 errors, 1 warning)
 ## Install
 
 SheetSentry is not on PyPI. Install from a checkout of this repository
-(requires access to this private repo and Python 3.10+):
+(requires Python 3.10+):
 
 ```bash
 git clone https://github.com/HlinorAI/sheetsentry.git
@@ -100,8 +100,7 @@ Exit codes: `0` clean, `1` findings at or above `--fail-on` (default `error`), `
 The repository ships a composite GitHub Action that installs SheetSentry from
 the action's own checked-out source — nothing is fetched from PyPI, because
 there is no SheetSentry package there. The consumer workflow needs Python
-3.10+ set up first (the action installs with `pip`), and access to this
-private repository.
+3.10+ set up first (the action installs with `pip`).
 
 Same repository:
 
@@ -117,21 +116,15 @@ Same repository:
     sarif_file: sheetsentry.sarif
 ```
 
-Another (private) repository: check out the consumer repo first, then the
-action source, using a token that has **contents: read** on this repository
-(create the token yourself; the examples below only reference it):
+Another repository: reference the action directly. There are no release tags
+yet, so pin a full commit SHA from this repository for reproducible runs:
 
 ```yaml
-- uses: actions/checkout@v4            # the consumer repository
-- uses: actions/checkout@v4            # the action's source
-  with:
-    repository: HlinorAI/sheetsentry
-    token: ${{ secrets.SHEETSSENTRY_SOURCE_READ }}
-    path: sheetsentry-action
+- uses: actions/checkout@v4
 - uses: actions/setup-python@v5
   with:
     python-version: "3.11"
-- uses: ./sheetsentry-action
+- uses: HlinorAI/sheetsentry@<commit-sha>
   with:
     files: data/*.xlsx
 - uses: github/codeql-action/upload-sarif@v3
@@ -144,7 +137,7 @@ space-separated patterns, or one literal path — a path containing spaces
 works when it names exactly one existing file:
 
 ```yaml
-- uses: ./sheetsentry-action
+- uses: HlinorAI/sheetsentry@<commit-sha>
   with:
     files: reports/final report.xlsx
 ```

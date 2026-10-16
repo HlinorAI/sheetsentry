@@ -5,10 +5,11 @@ boundary: 17 audit rules, 8 diff rules, a finding-review workflow, and SARIF
 output for GitHub code scanning. One runtime dependency (`openpyxl`);
 everything else is the standard library. Python 3.10+.
 
-## Current state (2026-10-01)
+## Current state (2026-10-16)
 
-- Private repository, version `0.1.0`, **not published** to PyPI.
-- Full test suite: 96 tests, CI matrix 3 OS x 4 Python versions.
+- Public repository (Apache-2.0) since 2026-10-16, version `0.1.0`,
+  **not published** to PyPI.
+- Full test suite: 107 tests, CI matrix 3 OS x 4 Python versions.
 - Composite GitHub Action (`action.yml`) runs the CLI on the caller's
   workbooks and installs SheetSentry **from the action's own checked-out
   source** (`github.action_path`) — not from PyPI, where no package exists.
@@ -22,7 +23,7 @@ everything else is the standard library. Python 3.10+.
   clean environment (asserts SheetSentry is not preinstalled), validates the
   SARIF report and the installed-source metadata (`direct_url.json`).
 - `README.md`: Install / In CI sections document source installation only and
-  the Python 3.10+ / private-repo prerequisites.
+  the Python 3.10+ prerequisite.
 - No version bump, no dependency changes, no release in this change.
 
 ## Multi-file output (SHEETSENTRY-002)
